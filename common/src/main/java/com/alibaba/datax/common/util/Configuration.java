@@ -4,6 +4,7 @@ import com.alibaba.datax.common.exception.CommonErrorCode;
 import com.alibaba.datax.common.exception.DataXException;
 import com.alibaba.datax.common.spi.ErrorCode;
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.alibaba.fastjson.serializer.SerializerFeature;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.CharUtils;
@@ -155,6 +156,33 @@ public class Configuration {
 
         return value;
     }
+
+	/**
+	 * 针对子节点不是JSON而是JSON格式的字符串的深度转换
+	 * 在现实开发过程中因为设计数据结构时出现无法预计的节点,会根据业务生成之后直接储存JSON格式的字符串而不是确定节点
+	 * 此方法针对第一层的节点值为"{\"xx\":value,\"xxx\":value}"格式的JSON格式字符串替换为{"xx":value,"xx":value}格式的节点
+	 * 直接获取JSON格式字符串的可忽略
+	 * @param str
+	 * @return
+	 */
+	public static JSONObject deepTransform(String str){
+		checkJSON(str);
+
+		JSONObject root = JSONObject.parseObject(str);
+		for (Map.Entry<String, Object> entry :root.entrySet()){
+			String value = entry.getValue().toString();
+			if(value.indexOf("{") == 0 && value.lastIndexOf("}")== value.length()-1){
+				root.put(entry.getKey(), JSONObject.parseObject(value));
+			}
+		}
+		return root;
+	}
+
+	public static void main(String[] args) {
+		String str = "{ \"_id\" : { \"$oid\" : \"5c943eafcc4d951efcc0e512\" }, \"server\" : \"E-20180510JTKRY:8080\", \"group\" : \"protocol\", \"event\" : \"input\", \"timestamp\" : \"2019-03-22 09:47:27.174\", \"ak\" : \"a4ecbc9ef087244520a79771420d2f2e279d5775\", \"clientOS\" : \"ANDROID\", \"clientVersion\" : \"22\", \"content\" : \"{\"type\":\"login\",\"clientinfo\":{\"deviceid\":\"device_5781f903\",\"ihuid\":\"\",\"uid\":\"test_5781f903\",\"productID\":\"\",\"timezone\":\"Asia/Shanghai\",\"osFamily\":\"ANDROID\",\"osVersion\":\"22\",\"deviceType\":\"VEHICLE\",\"deviceModel\":\"1.0\",\"appVersion\":\"1.0.0-SNAPSHOT\",\"location\":{\"longitude\":116.407394,\"latitude\":39.904211},\"csuid\":\"v0a06c1134c48d8c6d383439846214d468bc635e652b241e3014d7c34c69bc79ef52\"}}\", \"deviceId\" : \"device_5781f903\", \"deviceType\" : \"VEHICLE\", \"id\" : { \"$numberLong\" : \"12\" }, \"location\" : \"116.407394,39.90421\", \"message\" : \"LoginMessage\", \"ori_content\" : \"{\"attachment\":{\"protocolName\":\"vehicle\",\"protocolVersion\":\"1.0\"},\"client\":{\"type\":\"ANDROID\",\"version\":\"22\"},\"device\":{\"csid\":\"v0a06c1134c48d8c6d383439846214d468bc635e652b241e3014d7c34c69bc79ef52\",\"id\":\"device_5781f903\",\"ihuid\":\"\",\"model\":\"1.0\",\"oem\":\"ecarx\",\"productID\":\"\",\"type\":\"VEHICLE\"},\"id\":12,\"location\":{\"latitude\":39.90421,\"longitude\":116.407394,\"type\":\"gcj02\"},\"timestamp\":1553219247163,\"timestampMillis\":1553219247163,\"timezone\":\"Asia/Shanghai\"}\", \"protocolName\" : \"vehicle\", \"protocolVersion\" : \"1.0\", \"uri\" : \"/ai/token/login\" }";
+		JSONObject strJSON = deepTransform(str);
+		System.out.println(strJSON.toJSONString());
+	}
 
 	/**
 	 * 根据用户提供的json path，寻址具体的对象。
