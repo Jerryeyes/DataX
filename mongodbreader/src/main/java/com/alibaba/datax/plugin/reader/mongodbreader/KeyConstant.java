@@ -57,6 +57,14 @@ public class KeyConstant {
      */
     public static final String COLUMN_TYPE = "type";
     /**
+     * 每个列的执行内容
+     */
+    public static final String COLUMN_OPERATE = "operate";
+    /**
+     * 每个列的执行类型
+     */
+    public static final String COLUMN_OPERATETYPE = "operateType";
+    /**
      * 列分隔符
      */
     public static final String COLUMN_SPLITTER = "splitter";

@@ -1,10 +1,9 @@
 package com.alibaba.datax.plugin.reader.mongodbreader;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.Iterator;
-import java.util.List;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.*;
 
 import com.alibaba.datax.common.element.BoolColumn;
 import com.alibaba.datax.common.element.DateColumn;
@@ -28,8 +27,11 @@ import com.mongodb.MongoClient;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
+import org.apache.commons.io.IOUtils;
 import org.bson.Document;
 import org.bson.types.ObjectId;
+
+import javax.script.*;
 
 /**
  * Created by jianying.wcj on 2015/3/19 0019.
@@ -96,11 +98,11 @@ public class MongoDBReader extends Reader {
         @Override
         public void startRead(RecordSender recordSender) {
 
-            if(lowerBound== null || upperBound == null ||
-                mongoClient == null || database == null ||
-                collection == null  || mongodbColumnMeta == null) {
+            if (lowerBound == null || upperBound == null ||
+                    mongoClient == null || database == null ||
+                    collection == null || mongodbColumnMeta == null) {
                 throw DataXException.asDataXException(MongoDBReaderErrorCode.ILLEGAL_VALUE,
-                    MongoDBReaderErrorCode.ILLEGAL_VALUE.getDescription());
+                        MongoDBReaderErrorCode.ILLEGAL_VALUE.getDescription());
             }
             MongoDatabase db = mongoClient.getDatabase(database);
             MongoCollection col = db.getCollection(this.collection);
@@ -116,11 +118,13 @@ public class MongoDBReader extends Reader {
             } else {
                 filter.append(KeyConstant.MONGO_PRIMARY_ID, new Document("$gte", isObjectId ? new ObjectId(lowerBound.toString()) : lowerBound).append("$lt", isObjectId ? new ObjectId(upperBound.toString()) : upperBound));
             }
-            if(!Strings.isNullOrEmpty(query)) {
+            if (!Strings.isNullOrEmpty(query)) {
                 Document queryFilter = Document.parse(query);
                 filter = new Document("$and", Arrays.asList(filter, queryFilter));
             }
             dbCursor = col.find(filter).iterator();
+            ScriptEngine engine = new ScriptEngineManager().getEngineByName("javascript");
+            Map<String,CompiledScript> compiledJavaScriptPool = new HashMap<String,CompiledScript>();
             while (dbCursor.hasNext()) {
                 Document item = dbCursor.next();
                 Record record = recordSender.createRecord();
@@ -128,8 +132,31 @@ public class MongoDBReader extends Reader {
                 JSONObject transformed = Configuration.deepTransform(item.toJson());
                 Configuration config = Configuration.from(transformed);
                 while (columnItera.hasNext()) {
-                    JSONObject column = (JSONObject)columnItera.next();
+                    JSONObject column = (JSONObject) columnItera.next();
                     Object tempCol = config.get(column.getString(KeyConstant.COLUMN_NAME));
+                    String scriptStr = "";
+                    if (!Strings.isNullOrEmpty(column.getString(KeyConstant.COLUMN_OPERATE))) {
+                        if (!Strings.isNullOrEmpty(column.getString(KeyConstant.COLUMN_OPERATETYPE)) && "file".equals(column.getString(KeyConstant.COLUMN_OPERATETYPE))) {
+                            scriptStr = getJavaScriptString(column.getString(KeyConstant.COLUMN_OPERATE));
+                        } else {
+                            scriptStr = column.getString(KeyConstant.COLUMN_OPERATE);
+                        }
+                        try {
+                            CompiledScript compiledScript = null;
+                            engine.put("input", tempCol);
+                            if(compiledJavaScriptPool.containsKey(column.getString(KeyConstant.COLUMN_NAME))){
+                                compiledScript = compiledJavaScriptPool.get(column.getString(KeyConstant.COLUMN_NAME));
+                            }else{
+                                compiledScript = ((Compilable) engine).compile(scriptStr);
+                                compiledJavaScriptPool.put(column.getString(KeyConstant.COLUMN_NAME),compiledScript);
+                            }
+                            tempCol = compiledScript.eval();
+                        } catch (ScriptException e) {
+                            throw DataXException.asDataXException(MongoDBReaderErrorCode.UNEXCEPT_EXCEPTION,
+                                    MongoDBReaderErrorCode.UNEXCEPT_EXCEPTION.getDescription());
+                        }
+                    }
+
                     if (tempCol == null) {
                         if (KeyConstant.isDocumentType(column.getString(KeyConstant.COLUMN_TYPE))) {
                             String[] name = column.getString(KeyConstant.COLUMN_NAME).split("\\.");
@@ -152,7 +179,7 @@ public class MongoDBReader extends Reader {
                     }
                     if (tempCol == null) {
                         record.addColumn(new StringColumn(null));
-                    }else if (tempCol instanceof Double) {
+                    } else if (tempCol instanceof Double) {
                         //TODO deal with Double.isNaN()
                         record.addColumn(new DoubleColumn((Double) tempCol));
                     } else if (tempCol instanceof Boolean) {
@@ -161,16 +188,16 @@ public class MongoDBReader extends Reader {
                         record.addColumn(new DateColumn((Date) tempCol));
                     } else if (tempCol instanceof Integer) {
                         record.addColumn(new LongColumn((Integer) tempCol));
-                    }else if (tempCol instanceof Long) {
+                    } else if (tempCol instanceof Long) {
                         record.addColumn(new LongColumn((Long) tempCol));
                     } else {
-                        if(KeyConstant.isArrayType(column.getString(KeyConstant.COLUMN_TYPE))) {
+                        if (KeyConstant.isArrayType(column.getString(KeyConstant.COLUMN_TYPE))) {
                             String splitter = column.getString(KeyConstant.COLUMN_SPLITTER);
-                            if(Strings.isNullOrEmpty(splitter)) {
+                            if (Strings.isNullOrEmpty(splitter)) {
                                 throw DataXException.asDataXException(MongoDBReaderErrorCode.ILLEGAL_VALUE,
-                                    MongoDBReaderErrorCode.ILLEGAL_VALUE.getDescription());
+                                        MongoDBReaderErrorCode.ILLEGAL_VALUE.getDescription());
                             } else {
-                                ArrayList array = (ArrayList)tempCol;
+                                ArrayList array = (ArrayList) tempCol;
                                 String tempArrayStr = Joiner.on(splitter).join(array);
                                 record.addColumn(new StringColumn(tempArrayStr));
                             }
@@ -207,6 +234,16 @@ public class MongoDBReader extends Reader {
         @Override
         public void destroy() {
 
+        }
+
+        public String getJavaScriptString(String value){
+            try {
+                FileInputStream file = new FileInputStream(value);
+                value = IOUtils.toString(new InputStreamReader(file, "UTF-8"));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return value;
         }
 
     }
